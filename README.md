@@ -76,3 +76,4 @@ it's plain HTML/CSS/JS, no build step required.
   the same way if you'd like that expanded.
 
 Happy to extend any of these — just say which part to build out further.
+# Blume-Arts
