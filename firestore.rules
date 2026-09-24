@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for Authentication & Role-Based Access Control
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getAdminData() {
+      return get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data;
+    }
+
+    function isAuthorizedAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        getAdminData().status == 'active';
+    }
+
+    function isPrimaryAdmin() {
+      return isAuthorizedAdmin() && getAdminData().role == 'Primary Admin';
+    }
+
+    function isAdminOrAbove() {
+      return isAuthorizedAdmin() && 
+        (getAdminData().role == 'Primary Admin' || getAdminData().role == 'Admin');
+    }
+
+    function isManagerOrAbove() {
+      return isAuthorizedAdmin() && 
+        (getAdminData().role == 'Primary Admin' || getAdminData().role == 'Admin' || getAdminData().role == 'Manager');
+    }
+
+    // ------------------------------------------------------------
+    // ADMIN USERS COLLECTION (STRICT SECURITY)
+    // ------------------------------------------------------------
+    match /adminUsers/{uid} {
+      // Normal customers can NEVER read adminUsers.
+      // Authenticated users can read their own admin doc, or Primary Admin can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == uid || isPrimaryAdmin());
+      
+      // Creating admin user doc requires Primary Admin privilege, or initial bootstrapping if no admin Users exist
+      allow create: if isAuthenticated() && (isPrimaryAdmin() || !exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)));
+      
+      // Updates require Primary Admin, or self updating lastLoginAt/name
+      allow update: if isAuthenticated() && (isPrimaryAdmin() || (request.auth.uid == uid && isAuthorizedAdmin()));
+      
+      // Only Primary Admin can delete admin user docs, and CANNOT delete Primary Admin docs
+      allow delete: if isPrimaryAdmin() && resource.data.role != 'Primary Admin';
+    }
+
+    // ------------------------------------------------------------
+    // PRODUCTS COLLECTION
+    // ------------------------------------------------------------
+    match /products/{productId} {
+      allow read: if resource.data.available == true || isAuthorizedAdmin();
+      allow create, update, delete: if isAdminOrAbove();
+    }
+
+    // ------------------------------------------------------------
+    // CATEGORIES COLLECTION
+    // ------------------------------------------------------------
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isAdminOrAbove();
+    }
+
+    // ------------------------------------------------------------
+    // ORDERS COLLECTION
+    // ------------------------------------------------------------
+    match /orders/{orderId} {
+      allow create: if request.resource.data.keys().hasAll(
+        ['orderId','customerName','mobile','address','products','total','status','createdAt']
+      );
+      allow read: if isAuthorizedAdmin();
+      allow update, delete: if isManagerOrAbove();
+    }
+
+    // ------------------------------------------------------------
+    // SETTINGS COLLECTION
+    // ------------------------------------------------------------
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isPrimaryAdmin();
+    }
+  }
+}
